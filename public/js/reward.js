@@ -91,7 +91,7 @@ async function validateCard() {
                 timerElement.textContent = countdown;
                 if (countdown === 0) {
                     clearInterval(interval);
-                    window.location.href = '/rewardpoints?first=true';
+                    window.location.href = '/rewardpoints';
                 }
             }, 1000);
         } else {
@@ -100,8 +100,12 @@ async function validateCard() {
         }
         
     } catch (error) {
-        displayError(error.message); 
-    // console.error('Validation error:', error); 
+        if(error.message === "duplicate")
+            {displayError("Card number already exist")}
+        else{
+            displayError(error.message)
+            console.error('Validation error:', error); 
+        }
     } finally {
         button.disabled = false;
         button.textContent = "Validate Card";
